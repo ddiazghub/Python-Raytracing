@@ -2,31 +2,31 @@ import numpy as np
 from numpy import random
 from camera import Camera, CameraType
 from typing import TypeAlias
-from color import Black, ColorRGB
+from color import Black, ColorRGB, blend
 from vector import Point3D, Vector3, dot, norm2, normalize
 from ray import NullRay, Ray
 from numba.experimental import jitclass  # type: ignore
 from numba.typed import typedlist  # type: ignore
 from numba import types, njit, typed # type: ignore
-from object import Floor, FloorType, Material, MaterialType, NullSphere, Propagation, PropagationType, Sphere, SphereType
+from object import Floor, FloorType, LightSource, LightSourceType, Material, MaterialType, NullSphere, Propagation, PropagationType, Sphere, SphereType
 
 Image: TypeAlias = np.ndarray
 
-@jitclass(spec=[("objects", types.ListType(SphereType)), ("camera", CameraType), ("floor", FloorType), ("lightsource", types.double[::1]), ("background", types.uint8[::1])])
+@jitclass(spec=[("objects", types.ListType(SphereType)), ("camera", CameraType), ("floor", FloorType), ("lightsource", LightSourceType), ("background", types.uint8[::1])])
 class Scene:
     """A 3D scene that can be rendered in a 2D image."""
     objects: typedlist.List[Sphere]
     camera: Camera
     background: ColorRGB
-    lightsource: Point3D
+    lightsource: LightSource
     floor: Floor
     
-    def __init__(self, camera: Camera, lightsource: Point3D, background: ColorRGB, floor_height: int, floor_material: Material) -> None:
+    def __init__(self, camera: Camera, lightsource: LightSource, background: ColorRGB, floor_height: int, floor_material: Material) -> None:
         """A 3D scene that can be rendered in a 2D image.
 
         Args:
             camera (Camera): The scene's camera.
-            lightsource (Point3D): The lightsource's position.
+            lightsource (LightSource): The scene's lightsource's.
             background (ColorRGB): Background color.
             floor_height (int): The floor's y axis position.
             floor_material (Material): The floor's material.
@@ -69,7 +69,7 @@ class Scene:
                     position = lower_left + Vector3((j + j_rand) * width_ratio, (i + i_rand) * height_ratio, 0)
                     direction = position - origin
                     ray = Ray(origin, direction)
-                    color += self.trace(ray, 3)
+                    color += self.trace(ray, 5)
 
                 bitmap[image_height - i, j] = (color / samples).astype(np.uint8)
 
@@ -87,44 +87,67 @@ class Scene:
         depth = max_depth
         ray = starting_ray
         color = self.background
-        propagation_stack = typedlist.List.empty_list(PropagationType)
+        propagation_stack: list[Propagation] = typedlist.List.empty_list(PropagationType)
 
         while True:
+            #print("Recursion depth:", depth)
             obj, normal, inside = self.intersects(ray)
-            light: Ray
             child: Ray
+            light: Ray
 
             if obj.is_null():
-                normal = self.floor.intersects(starting_ray)
+                #print("Intersects floor")
+                normal = self.floor.intersects(ray)
 
                 if normal.is_null():
+                    color = self.trace_sky(ray)
                     break
                 
-                light, child = child_ray(self, starting_ray, self.floor, normal, depth)
+                child, light = child_ray(self, ray, self.floor, normal, depth)
                 obj.material = self.floor.material
             else:
-                light, child = child_ray(self, starting_ray, obj, normal, depth)
+                #print("Intersects sphere with color:", obj.material.color)
+                child, light = child_ray(self, ray, obj, normal, depth)
 
             if light.is_null():
+                #print("Diffuse obj In shadow")
                 color = Black()
                 break
 
-            attenuation = max(0, dot(normal.direction, light.direction))
+            light_intensity = max(0, dot(normal.direction, light.direction))
 
             if child.is_null():
-                diffuse_color = attenuation * obj.material.color
-                color = diffuse_color.astype(np.uint8)
+                diffuse_color = self.lightsource.blend_with(obj.material.color, light_intensity ** 10)
+                color = (diffuse_color * light_intensity).astype(np.uint8)
+                #print("Diffuse object. Pixel color:", color)
                 break
 
-            propagation_stack.append(Propagation(obj.material, attenuation))
-            ray = light
+            propagation_stack.append(Propagation(obj.material, light_intensity))
+            #print("Reflective object. Material:", obj.material.color, obj.material.reflection, obj.material.transparency)
+            ray = child
             depth -= 1
+
+        color = self.unwind_stack(propagation_stack, color)
+
+        return color
+
+    def trace_sky(self, ray: Ray) -> ColorRGB:
+        direction = normalize(ray.direction)
+        light_direction = normalize(self.lightsource.center - ray.origin)
+        light_intensity = max(0, dot(direction, light_direction))
+        
+        return self.lightsource.blend_with(self.background, light_intensity).astype(np.uint8)
+
+    def unwind_stack(self, propagation_stack: list[Propagation], final_color: ColorRGB) -> ColorRGB:
+        color = final_color
 
         while len(propagation_stack) > 0:
             propagation = propagation_stack.pop()
-            child_color = propagation.material.color * (1 - propagation.material.reflection) + propagation.material.reflection * color
-            color = (child_color).astype(np.uint8)# (propagation.attenuation * child_color).astype(np.uint8)
-
+            #print("Ray reflected by:", propagation.material.color, "Reflection color:", color)
+            child_color = blend(color, propagation.material.color, propagation.material.reflection)
+            child_color = self.lightsource.blend_with(child_color, propagation.light_intensity ** 10)
+            color = (child_color * propagation.light_intensity).astype(np.uint8)
+            
         return color
 
     def intersects(self, ray: Ray) -> tuple[Sphere, Ray, bool]:
@@ -151,6 +174,8 @@ class Scene:
 
         return closest
 
+    
+
 @njit(inline="always")
 def child_ray(scene: Scene, ray: Ray, obj: Sphere | Floor, normal_ray: Ray, depth: int) -> tuple[Ray, Ray]:
     """Calculates and traces child ray after parent ray collision depending on object material type.
@@ -163,17 +188,23 @@ def child_ray(scene: Scene, ray: Ray, obj: Sphere | Floor, normal_ray: Ray, dept
     Returns:
         Ray: Child ray to trace next.
     """
-
-    # Object is diffuse
-    light_direction = normalize(scene.lightsource - normal_ray.origin)
+    #print("Ray:", ray.origin, ray.direction)
+    #print("Normal ray:", normal_ray.origin, normal_ray.direction)
+    light_direction = normalize(scene.lightsource.center - normal_ray.origin)
     light_ray = Ray(normal_ray.origin, light_direction)
+    #print("Light ray:", light_ray.origin, light_direction)
 
+    # Object is reflective/refractive
     if (obj.material.reflection > 0 or obj.material.transparency > 0) and depth > 0:
         reflection_direction = ray.direction - 2 * dot(ray.direction, normal_ray.direction) * normal_ray.direction
-        
-        return (light_ray, Ray(normal_ray.origin, reflection_direction))
+        #print("Object is reflective. Reflection ray:", normal_ray.origin, reflection_direction)
+        return (Ray(normal_ray.origin, reflection_direction), light_ray)
 
+    # Object is diffuse
     if scene.intersects(light_ray)[0].is_null():
-        return (light_ray, NullRay())
+        #print("Object is diffuse")
+        return (NullRay(), light_ray)
     
+    # Object is shadowed
+    #print("Object is shadowed")
     return (NullRay(), NullRay())

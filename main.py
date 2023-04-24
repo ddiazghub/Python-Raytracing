@@ -1,6 +1,7 @@
+from ray import Ray
 import numpy as np
 from color import Color
-from object import Material, Sphere
+from object import LightSource, Material, Sphere
 from scene import Scene
 from camera import Camera
 from vector import Origin, Point3
@@ -19,25 +20,31 @@ def image_vectorization() -> np.ndarray:
     return image
 """
 
+RED = Color(255, 0, 0)
+GREEN = Color(0, 255, 0)
+BLUE = Color(0, 0, 255)
+WHITE = Color(255, 255, 255)
 IMAGE_WIDTH = 400
 IMAGE_HEIGHT = 200
 VIEWPORT_WIDTH = 4
 VIEWPORT_HEIGHT = 2
 FOCAL_DISTANCE = 1
-LIGHTSOURCE_POSITION = Point3(0, 10, -5)
+LIGHTSOURCE = LightSource(Point3(0, 10, -10), 4, WHITE)
 BACKGROUND = Color(173, 216, 230)
 FLOOR = Material(Color(209, 206, 2), 0, 0)
-RED = Color(255, 0, 0)
-GREEN = Color(0, 255, 0)
-BLUE = Color(0, 0, 255)
-WHITE = Color(255, 255, 255)
 SAMPLES = 5
 
 if __name__ == "__main__":
     camera = Camera(Origin(), VIEWPORT_WIDTH, VIEWPORT_HEIGHT, FOCAL_DISTANCE)
-    scene = Scene(camera, LIGHTSOURCE_POSITION, BACKGROUND, -1, FLOOR)
+    scene = Scene(camera, LIGHTSOURCE, BACKGROUND, -1, FLOOR)
     scene.add(Sphere(Point3(0, 0, 3), 1, Material(RED, 0, 0)))
     scene.add(Sphere(Point3(2, 0, 3), 1, Material(GREEN, 0, 0.7)))
+    #width_ratio, height_ratio = VIEWPORT_WIDTH / IMAGE_WIDTH, VIEWPORT_HEIGHT / IMAGE_HEIGHT
+    #shift = Point3(270 * width_ratio, (IMAGE_HEIGHT - 1 - 130) * height_ratio, 0)
+    #position = camera.viewport.lower_left + shift
+    #ray = Ray(camera.position, position - camera.position)
+    #print("Pixel color:", scene.trace(ray, 5))
+    
     #scene.add(Sphere(Point3(10, 0, 20), 13, BLUE))
     #scene.add(Sphere(Point3(-18, 0, 30), 20, WHITE))
     screen = np.empty((IMAGE_HEIGHT, IMAGE_WIDTH, 3), dtype=np.uint8)
