@@ -21,6 +21,19 @@ class Ray:
 
 RayType = Ray.class_type.instance_type # type: ignore
 
+@jitclass(spec=[("reflect", RayType), ("refract", RayType), ("light", RayType)])
+class ChildRays:
+    reflect: Ray
+    refract: Ray
+    light: Ray
+
+    def __init__(self, reflect: Ray, refract: Ray, light: Ray) -> None:
+        self.reflect = reflect
+        self.refract = refract
+        self.light = light
+
+ChildRaysType = ChildRays.class_type.instance_type # type: ignore
+
 @njit(inline="always")
 def NullRay() -> Ray:
     return Ray(Origin(), VectorZero())

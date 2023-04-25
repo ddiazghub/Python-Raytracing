@@ -7,16 +7,18 @@ from vector import Point3D, Origin, Vector3, dot, norm2, normalize
 from color import Black, ColorRGB, blend
 from ray import NullRay, Ray
 
-@jitclass(spec=[("color", uint8[::1]), ("transparency", double), ("reflection", double)])
+@jitclass(spec=[("color", uint8[::1]), ("transparency", double), ("reflection", double), ("refraction_index", double)])
 class Material:
     color: ColorRGB
     transparency: float
     reflection: float
+    refraction_index: float
 
-    def __init__(self, color: ColorRGB, transparency: float, reflection: float) -> None:
+    def __init__(self, color: ColorRGB, transparency: float, reflection: float, refraction_index: float) -> None:
         self.color = color
         self.transparency = transparency
         self.reflection = reflection
+        self.refraction_index = refraction_index
 
 MaterialType = Material.class_type.instance_type # type: ignore
 
@@ -59,8 +61,16 @@ class Sphere:
         self.radius = radius
         self.material = material
     
-    def intersects(self, ray: Ray) -> tuple[Ray, bool]:
+    def intersects(self, ray: Ray) -> Ray:
         return sphere_intersects(self, ray)
+
+    def shadow(self) -> float:
+        if self.material.reflection > 0 and self.material.transparency > 0:
+            return max(self.material.reflection, self.material.transparency)
+        elif self.material.reflection > 0:
+            return self.material.reflection
+        else:
+            return self.material.transparency
 
     def is_null(self) -> bool:
         return self.radius == 0
@@ -79,17 +89,19 @@ class LightSource:
     def blend_with(self, color: ColorRGB, intensity: float) -> ColorRGB:
         return blend(self.color, color, intensity)
 
-@jitclass(spec=[("material", MaterialType), ("attenuation", double)])
+@jitclass(spec=[("reflection_material", MaterialType), ("refraction_material", MaterialType), ("attenuation", double)])
 class Propagation:
-    material: Material
+    reflection_material: Material
+    refraction_material: Material
     light_intensity: float
 
-    def __init__(self, material: Material, attenuation: float) -> None:
-        self.material = material
-        self.light_intensity = attenuation
+    def __init__(self, reflection_material: Material, refraction_material: Material, light_intensity: float) -> None:
+        self.reflection_material = reflection_material
+        self.refraction_material = refraction_material
+        self.light_intensity = light_intensity
 
 @njit
-def sphere_intersects(self: Sphere | LightSource, ray: Ray) -> tuple[Ray, bool]:
+def sphere_intersects(self: Sphere | LightSource, ray: Ray) -> Ray:
     """
     Sphere intersects ray if (ray.origin + t * ray.direction − sphere.center)^2 <= sphere.radius^2 for any t.
     We solve the quadratic formula to find time of intersection.
@@ -108,20 +120,21 @@ def sphere_intersects(self: Sphere | LightSource, ray: Ray) -> tuple[Ray, bool]:
 
         if collision_t < 0.0001:
             collision_t = (-half_b + disc_sqrt) / a
+            inside = True
 
             if collision_t < 0.0001:
-                return (NullRay(), False)
+                return NullRay()
 
         collision_point = ray.propagate(collision_t)
         normal = (collision_point - self.center) / self.radius
 
-        return (Ray(collision_point, -normal if inside else normal), inside)
+        return Ray(collision_point, -normal if inside else normal)
     
-    return (NullRay(), False)
+    return NullRay()
 
 @njit(inline="always")
 def NullSphere() -> Sphere:
-    return Sphere(Origin(), 0, Material(Black(), 0, 0))
+    return Sphere(Origin(), 0, Material(Black(), 0, 0, 0))
 
 FloorType = Floor.class_type.instance_type # type: ignore
 SphereType = Sphere.class_type.instance_type # type: ignore
