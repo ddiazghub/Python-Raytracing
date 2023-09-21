@@ -30,19 +30,20 @@ IMAGE_HEIGHT = 200
 VIEWPORT_WIDTH = 4
 VIEWPORT_HEIGHT = 2
 FOCAL_DISTANCE = 1
+CAMERA_POSITION = Origin() + Vector3(0, 0.2, 0)
 LIGHTSOURCE = LightSource(Point3(0, 10, -6), 4, WHITE)
 BACKGROUND = Color(173, 216, 230)
-FLOOR = Material(Color(209, 206, 2), 0, 0, 0)
+FLOOR = Material(Color(209, 206, 2), 0, 0, 1.5)
 SAMPLES = 5
 
 if __name__ == "__main__":
-    camera = Camera(Origin(), VIEWPORT_WIDTH, VIEWPORT_HEIGHT, FOCAL_DISTANCE)
+    camera = Camera(CAMERA_POSITION, VIEWPORT_WIDTH, VIEWPORT_HEIGHT, FOCAL_DISTANCE)
     scene = Scene(camera, LIGHTSOURCE, BACKGROUND, -1, FLOOR)
     scene.add(Sphere(Point3(0, 0, 3), 1, Material(RED, 0, 0, 1)))
-    scene.add(Sphere(Point3(2, 0, 3), 1, Material(GREEN, 0.8, 0.3, 1.3)))
-    scene.add(Sphere(Point3(-2, 0, 3), 1, Material(METAL, 0, 0.8, 1.3)))
+    scene.add(Sphere(Point3(2, 0, 3), 1, Material(WHITE, 0.3, 0, 1.5)))
+    scene.add(Sphere(Point3(-2, 0, 3), 1, Material(METAL, 0, 0.9, 1.3)))
     #width_ratio, height_ratio = VIEWPORT_WIDTH / IMAGE_WIDTH, VIEWPORT_HEIGHT / IMAGE_HEIGHT
-    #shift = Point3(270 * width_ratio, (IMAGE_HEIGHT - 1 - 120) * height_ratio, 0)
+    #shift = Point3(270 * width_ratio, (IMAGE_HEIGHT - 1 - 110) * height_ratio, 0)
     #position = camera.viewport.lower_left + shift
     #ray = Ray(camera.position, position - camera.position)
     #print("Pixel color:", scene.trace(ray, 5))

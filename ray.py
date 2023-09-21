@@ -21,16 +21,18 @@ class Ray:
 
 RayType = Ray.class_type.instance_type # type: ignore
 
-@jitclass(spec=[("reflect", RayType), ("refract", RayType), ("light", RayType)])
+@jitclass(spec=[("reflect", RayType), ("refract", RayType), ("light", RayType), ("fresnel", double)])
 class ChildRays:
     reflect: Ray
     refract: Ray
     light: Ray
+    fresnel: float
 
-    def __init__(self, reflect: Ray, refract: Ray, light: Ray) -> None:
+    def __init__(self, reflect: Ray, refract: Ray, light: Ray, fresnel: float) -> None:
         self.reflect = reflect
         self.refract = refract
         self.light = light
+        self.fresnel = fresnel
 
 ChildRaysType = ChildRays.class_type.instance_type # type: ignore
 

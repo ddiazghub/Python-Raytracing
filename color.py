@@ -13,6 +13,10 @@ def Color(red: int, green: int, blue: int) -> ColorRGB:
 def Black() -> ColorRGB:
     return Color(0, 0, 0)
 
+@njit(uint8[::1](), inline="always")
+def White() -> ColorRGB:
+    return Color(255, 255, 255)
+
 @njit(inline="always")
 def blend(first: ColorRGB, second: ColorRGB, ratio: float) -> ColorRGB:
     return ratio * first + (1 - ratio) * second

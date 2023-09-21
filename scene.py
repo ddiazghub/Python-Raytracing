@@ -1,15 +1,14 @@
 import numpy as np
 from numpy import random
-from numpy.random.mtrand import normal
 from camera import Camera, CameraType
 from typing import TypeAlias
-from color import Black, ColorRGB, blend
+from color import Black, ColorRGB, White, blend
 from vector import Point3D, Vector3, dot, norm2, normalize
 from ray import ChildRays, NullRay, Ray
 from numba.experimental import jitclass  # type: ignore
 from numba.typed import typedlist  # type: ignore
 from numba import types, njit, typed # type: ignore
-from object import Floor, FloorType, LightSource, LightSourceType, Material, MaterialType, NullSphere, Propagation, PropagationType, Sphere, SphereType
+from object import Floor, FloorType, LightSource, LightSourceType, Material, NullSphere, Sphere, SphereType
 
 Image: TypeAlias = np.ndarray
 
@@ -70,71 +69,11 @@ class Scene:
                     position = lower_left + Vector3((j + j_rand) * width_ratio, (i + i_rand) * height_ratio, 0)
                     direction = normalize(position - origin)
                     ray = Ray(origin, direction)
-                    color += self.trace(ray, 5)
+                    color += self.trace(ray, 20)
 
                 bitmap[image_height - i, j] = (color / samples).astype(np.uint8)
 
     def trace(self, ray: Ray, max_depth: int) -> ColorRGB:
-        """Traces a ray in order to find the pixel's color.
-        (This was supposed to be a recursive function but for some reason numba doesn't support recursion).
-
-        Args:
-            ray (Ray): The ray to trace.
-            depth (int): Current ray reflection recursion depth.
-
-        Returns:
-            ColorRGB: The pixel's color.
-        
-        depth = max_depth
-        ray = starting_ray
-        color = self.background
-        propagation_stack: list[Propagation] = typedlist.List.empty_list(PropagationType)
-
-        while True:
-            #print("Recursion depth:", depth)
-            obj, normal, inside = self.intersects(ray)
-            children: ChildRays
-
-            if obj.is_null():
-                #print("Intersects floor")
-                normal = self.floor.intersects(ray)
-
-                if normal.is_null():
-                    color = self.trace_sky(ray)
-                    break
-                
-                children = child_rays(self, ray, self.floor, normal, depth)
-                obj.material = self.floor.material
-            else:
-                #print("Intersects sphere with color:", obj.material.color)
-                children = child_rays(self, ray, obj, normal, depth)
-    
-            # I'm really sorry. Numba does not support match statements
-            case = children.get_type()
-
-            if case == 0:
-                #print("Diffuse obj In shadow")
-                color = Black()
-                break
-
-            light_intensity = max(0, dot(normal.direction, children.light.direction))
-
-            if case == 1:
-                diffuse_color = self.lightsource.blend_with(obj.material.color, light_intensity ** 10)
-                color = (diffuse_color * light_intensity).astype(np.uint8)
-                #print("Diffuse object. Pixel color:", color)
-                break
-
-            propagation_stack.append(Propagation(obj.material, self.floor.material, light_intensity))
-            #print("Reflective object. Material:", obj.material.color, obj.material.reflection, obj.material.transparency)
-            ray = children.reflect
-            depth -= 1
-
-        color = self.unwind_stack(propagation_stack, color)
-
-        return color
-        """
-
         return trace(self, ray, max_depth)
 
     def trace_sky(self, ray: Ray) -> ColorRGB:
@@ -199,6 +138,7 @@ def trace(self: Scene, ray: Ray, depth: int) -> ColorRGB:
     #print("Recursion depth:", depth)
     obj, normal = self.intersects(ray)
     children: ChildRays
+    facing_ratio: float
 
     if obj.is_null():
         normal = self.floor.intersects(ray)
@@ -206,19 +146,26 @@ def trace(self: Scene, ray: Ray, depth: int) -> ColorRGB:
         if normal.is_null():
             #print("Propagates to the sky")
             return self.trace_sky(ray)
-        
+
         #print("Intersects floor")
-        children = child_rays(self, ray, self.floor, normal, depth)
+        facing_ratio = dot(ray.direction, normal.direction)
+        children = child_rays(self, ray, self.floor, normal, facing_ratio, depth)
         obj.material = self.floor.material
     else:
         #print("Intersects sphere with color:", obj.material.color)
-        children = child_rays(self, ray, obj, normal, depth)
+        facing_ratio = dot(ray.direction, normal.direction)
+        children = child_rays(self, ray, obj, normal, facing_ratio, depth)
 
     light_intensity = np.abs(dot(normal.direction, children.light.direction))
     intensity10 = light_intensity ** 10
     #print("Light intensity is: ", light_intensity)
+    no_reflect = children.reflect.is_null()
+    no_refract = children.refract.is_null()
 
-    if children.reflect.is_null():
+    #print("No reflect: ", no_reflect)
+    #print("No refract: ", no_refract)
+
+    if no_reflect and no_refract:
         light_intensity *= 1 - self.shadow(children.light)
         diffuse_color = self.lightsource.blend_with(obj.material.color, intensity10)
         diffuse_color = (diffuse_color * light_intensity).astype(np.uint8)
@@ -226,41 +173,72 @@ def trace(self: Scene, ray: Ray, depth: int) -> ColorRGB:
 
         return diffuse_color
 
-    refraction_color = Black()
-    reflection_color = Black()
-    #facing_ratio = dot(normal.direction, ray.direction)
-    #inverse_ratio = 1 - facing_ratio
-    #fresnel = blend(inverse_ratio * inverse_ratio * inverse_ratio, 1, 0.1)
-    #reflect_blend = 0
-    #refract_blend = 0
-    #print("Reflective/Refractive object")
+    #print("Tag1")
+    #print("Reflection ray:", children.reflect.origin, children.reflect.direction)
+    #print("Refraction ray:", children.refract.origin, children.refract.direction)
+    #print("Material:", obj.material.color, obj.material.reflection, obj.material.refraction_index, obj.material.transparency)
+    
+    if no_reflect or no_refract:
+        blend_ratio: float
+        child: Ray
 
-    #if obj.material.reflection > 0 and obj.material.transparency > 0:
-        #reflect_blend, refract_blend = fresnel, 1 - fresnel
+        if no_refract:
+            blend_ratio = obj.material.reflection
+            child = children.reflect
+        else:
+            if facing_ratio > 0:
+                light_intensity = 1
+                intensity10 = 1
 
-    if obj.material.reflection > 0:
-        #print("Ray reflected by:", propagation.material.color, "Reflection color:", color)
-        reflection_color = trace(self, children.reflect, depth - 1)
-        #print("Reflection color:", reflection_color)
-        #if refract_blend == 0:
-            #reflect_blend = 1
-        
-    if obj.material.transparency > 0:
+            child = children.refract
+            blend_ratio = obj.material.transparency
+
+        blend_ratio *= blend_ratio * blend_ratio
+        child_color = trace(self, child, depth - 1)
+        light_intensity = (light_intensity * (1 - blend_ratio)) + blend_ratio
+        pixel_color = blend(child_color, obj.material.color, blend_ratio)
+        pixel_color = self.lightsource.blend_with(pixel_color, intensity10)
+        #print("Reflective | refractive object. Pixel color:", pixel_color)
+
+        return (pixel_color * light_intensity).astype(np.uint8)
+
+    refraction_color = obj.material.color
+    reflection_color: ColorRGB
+
+    if children.fresnel < 1:
         refraction_color = trace(self, children.refract, depth - 1)
-        #print("Refraction color:", refraction_color)
-        #if reflect_blend == 0:
-            #refract_blend = 1
 
-    intensity_index = max(obj.material.transparency, obj.material.transparency)
-    light_intensity = (light_intensity * (1 - intensity_index)) + intensity_index 
-    pixel_color = blend(reflection_color, blend(refraction_color, obj.material.color, obj.material.transparency), obj.material.reflection)
-    pixel_color = self.lightsource.blend_with(pixel_color, intensity10)
-    #print("Pixel color:", pixel_color * light_intensity)
+    #print("Facing ratio:", facing_ratio)
+    #print("Reflective and refractive object.")
+    reflection_color = trace(self, children.reflect, depth - 1) if facing_ratio < 0 else refraction_color
+    #print("Reflection color:", reflection_color)
+    #print("Refraction color:", refraction_color)
+    pixel_color = reflection_color * children.fresnel + refraction_color * (1 - children.fresnel) * obj.material.transparency
+    #print("pixel color 1:", pixel_color)
+    pixel_color = (pixel_color * obj.material.color / White()).astype(np.uint8)
+    #print("pixel color 2:", pixel_color)
 
-    return (pixel_color * light_intensity).astype(np.uint8)
+    return pixel_color
+
+    #if obj.material.reflection > 0:
+    #    blend_ratio = obj.material.reflection
+    #else:
+    #    if facing_ratio > 0:
+    #        light_intensity = 1
+    #        intensity10 = 1
+    #
+    #   blend_ratio = obj.material.transparency
+    #
+    #blend_ratio *= blend_ratio * blend_ratio
+    #child_color = trace(self, children.child, depth - 1)
+    #light_intensity = (light_intensity * (1 - blend_ratio)) + blend_ratio
+    #pixel_color = blend(child_color, obj.material.color, blend_ratio)
+    #pixel_color = self.lightsource.blend_with(pixel_color, intensity10)
+
+    #return (pixel_color * light_intensity).astype(np.uint8)
 
 @njit(inline="always")
-def child_rays(scene: Scene, ray: Ray, obj: Sphere | Floor, normal_ray: Ray, depth: int) -> ChildRays:
+def child_rays(scene: Scene, ray: Ray, obj: Sphere | Floor, normal_ray: Ray, facing_ratio: float, depth: int) -> ChildRays:
     """Calculates and child rays after parent ray collision depending on object material type.
 
     Args:
@@ -278,32 +256,74 @@ def child_rays(scene: Scene, ray: Ray, obj: Sphere | Floor, normal_ray: Ray, dep
     #print("Light ray:", light_ray.origin, light_direction)
 
     # Object is reflective/refractive
-    if (obj.material.reflection > 0 or obj.material.transparency > 0) and depth > 0:
-        facing_ratio = dot(ray.direction, normal_ray.direction)
-        reflection_direction = ray.direction - 2 * facing_ratio * normal_ray.direction
-        reflection_ray = Ray(normal_ray.origin, reflection_direction)
-        refraction_ray = refract(ray, normal_ray, facing_ratio, obj.material.refraction_index)
-        #print("Object is reflective/refractive. Reflection ray:", normal_ray.origin, reflection_direction, "Refraction ray:", refraction_ray.origin, refraction_ray.direction)
-        
-        return ChildRays(reflection_ray, refraction_ray, light_ray)
+    if depth > 0:
+        if obj.material.reflection > 0 and obj.material.transparency > 0:
+            #print("Obj material:", obj.material.color, obj.material.reflection, obj.material.transparency, obj.material.refraction_index)
+            reflection = reflect(ray, normal_ray, facing_ratio)
+            refraction, kr = refract(ray, normal_ray, facing_ratio, obj.material.refraction_index)
 
-    return ChildRays(NullRay(), NullRay(), light_ray)
+            return ChildRays(reflection, refraction, light_ray, kr)
+
+        if obj.material.reflection > 0:
+            return ChildRays(reflect(ray, normal_ray, facing_ratio), NullRay(), light_ray, np.NaN)
+
+        if obj.material.transparency > 0:
+            #print("Obj material:", obj.material.color, obj.material.reflection, obj.material.transparency, obj.material.refraction_index)
+            refraction, kr = refract(ray, normal_ray, facing_ratio, obj.material.refraction_index)
+
+            return ChildRays(NullRay(), refraction, light_ray, kr)
+
+    return ChildRays(NullRay(), NullRay(), light_ray, np.NaN)
 
 @njit(inline="always")
-def refract(ray: Ray, normal_ray: Ray, facing_ratio: float, eta_ratio: float) -> Ray:
+def reflect(ray: Ray, normal_ray: Ray, facing_ratio: float) -> Ray:
+    #print("Computing reflection")
+    reflection_direction = ray.direction - 2 * facing_ratio * normal_ray.direction
+    
+    return Ray(normal_ray.origin, reflection_direction)
+
+@njit(inline="always")
+def refract(ray: Ray, normal_ray: Ray, facing_ratio: float, eta_ratio: float) -> tuple[Ray, float]:
+    #print("Computing refraction")
     normal = normal_ray.direction
     cosine = facing_ratio
+    #print("Facing ratio is", facing_ratio)
+    #print("Eta ratio is", eta_ratio)
 
-    if facing_ratio > 0:
-        normal = -normal
-    else:
+    if facing_ratio < 0:
         eta_ratio = 1 / eta_ratio
         cosine = -cosine
-    
+    else:
+        normal = -normal
+        
+    #print("Inverted facing ratio")
     #print("Facing ratio:", facing_ratio)
     #print("Cosine:", cosine)
     #print("Eta ratio:", eta_ratio)
-    perpendicular = eta_ratio * (ray.direction + cosine * normal_ray.direction)
-    parallel = -np.sqrt(np.abs(1 - norm2(perpendicular))) * normal_ray.direction
+    k = 1 - (eta_ratio * eta_ratio) * (1 - cosine * cosine)
+    refraction_direction = (ray.direction + facing_ratio * normal) * eta_ratio - normal * np.sqrt(k)
+    fresnel_effect = fresnel(facing_ratio, eta_ratio)
+    #print("Computed fresnel")
+    refraction_ray = Ray(normal_ray.origin, refraction_direction)
+    refraction_ray.origin = refraction_ray.propagate(0.001)
+    #print("Found refraction ray")
+    return (refraction_ray, fresnel_effect)
 
-    return Ray(normal_ray.origin - normal_ray.direction * 0.001, perpendicular + parallel)
+@njit
+def fresnel(facing_ratio: float, eta_ratio: float) -> float:
+    #print("Computing fresnel")
+    sin_t = eta_ratio * np.sqrt(max(1 - facing_ratio * facing_ratio, 0))
+
+    if sin_t < 1:
+        cos_t = np.sqrt(max(1 - sin_t * sin_t, 0))
+        cos_i = np.abs(cos_t)
+        eta_i, eta_t = (eta_ratio, 1) if eta_ratio > 0 else (1, 1 / eta_ratio)
+        etat_cosi, etai_cost = eta_t * cos_i, eta_i * cos_t
+        etai_cosi, etat_cost = eta_i * cos_i, eta_t * cos_t
+        r_s = (etat_cosi - etai_cost) / (etat_cosi + etai_cost)
+        r_p = (etai_cosi - etat_cost) / (etai_cosi + etat_cost)
+
+        return (r_s * r_s + r_p * r_p) / 2
+        
+    # Total internal reflection
+    return 1

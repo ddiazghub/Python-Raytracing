@@ -89,17 +89,6 @@ class LightSource:
     def blend_with(self, color: ColorRGB, intensity: float) -> ColorRGB:
         return blend(self.color, color, intensity)
 
-@jitclass(spec=[("reflection_material", MaterialType), ("refraction_material", MaterialType), ("attenuation", double)])
-class Propagation:
-    reflection_material: Material
-    refraction_material: Material
-    light_intensity: float
-
-    def __init__(self, reflection_material: Material, refraction_material: Material, light_intensity: float) -> None:
-        self.reflection_material = reflection_material
-        self.refraction_material = refraction_material
-        self.light_intensity = light_intensity
-
 @njit
 def sphere_intersects(self: Sphere | LightSource, ray: Ray) -> Ray:
     """
@@ -134,9 +123,8 @@ def sphere_intersects(self: Sphere | LightSource, ray: Ray) -> Ray:
 
 @njit(inline="always")
 def NullSphere() -> Sphere:
-    return Sphere(Origin(), 0, Material(Black(), 0, 0, 0))
+    return Sphere(Origin(), 0, Material(Black(), 0, 0, 1))
 
 FloorType = Floor.class_type.instance_type # type: ignore
 SphereType = Sphere.class_type.instance_type # type: ignore
 LightSourceType = LightSource.class_type.instance_type # type: ignore
-PropagationType = Propagation.class_type.instance_type # type: ignore
